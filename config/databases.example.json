@@ -1,0 +1,14 @@
+{
+  "server": "your-sql-server-host",
+  "user": "your-username",
+  "password": "your-password",
+  "port": 1433,
+  "encrypt": true,
+  "trustServerCertificate": false,
+  "databases": {
+    "tenant":  "TenantDB",
+    "global":  "GlobalDB",
+    "admin":   "AdminDB",
+    "gogreen": "GoGreenDB"
+  }
+}
