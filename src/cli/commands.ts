@@ -1,5 +1,5 @@
 import { readQuery, exportQuery } from "../tools/queryTools.js";
-import { listTables, describeTable } from "../tools/schemaTools.js";
+import { listTables, describeTable, previewTable } from "../tools/schemaTools.js";
 import { listSPs, describeSP, execSP } from "../tools/spTools.js";
 import {
   listViews, describeView,
@@ -16,6 +16,7 @@ export type CliCommandName =
   | "export-query"
   | "list-tables"
   | "describe-table"
+  | "preview"
   | "list-views"
   | "describe-view"
   | "list-functions"
@@ -42,15 +43,24 @@ function getStringOption(options: CliOptions, key: string): string {
   return value;
 }
 
+function getOptionalString(options: CliOptions, key: string): string | undefined {
+  const value = options[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
 const commandDefinitions: Record<CliCommandName, CliCommandDefinition> = {
   // ── Queries ────────────────────────────────────────────────────────────────
   "read-query": {
-    description: "Execute a SELECT query and print JSON results.",
-    usage: "read-query --query \"SELECT TOP 10 * FROM dbo.Users\"",
-    execute: async (options) => readQuery(getStringOption(options, "query")),
+    description: "Execute a SELECT query. Use --format table for human-readable output.",
+    usage: "read-query --query \"SELECT TOP 10 * FROM tbl_global_hierarchy\" [--format json|table]",
+    execute: async (options) => {
+      const fmt = getOptionalString(options, "format");
+      const format = fmt === "table" ? "table" : "json";
+      return readQuery(getStringOption(options, "query"), format);
+    },
   },
   "export-query": {
-    description: "Execute a SELECT query and export as CSV or JSON.",
+    description: "Execute a SELECT query and export as JSON, CSV, or table.",
     usage: "export-query --format csv --query \"SELECT * FROM dbo.Users\"",
     execute: async (options) => {
       const format = getStringOption(options, "format").toLowerCase();
@@ -65,9 +75,14 @@ const commandDefinitions: Record<CliCommandName, CliCommandDefinition> = {
     execute: async () => listTables(),
   },
   "describe-table": {
-    description: "Show columns and types for a table.",
+    description: "Show column definitions for a table.",
     usage: "describe-table --table Cockpit_Master",
     execute: async (options) => describeTable(getStringOption(options, "table")),
+  },
+  "preview": {
+    description: "Show schema + 3 sample rows for a table in one call.",
+    usage: "preview --table tbl_global_hierarchy",
+    execute: async (options) => previewTable(getStringOption(options, "table")),
   },
 
   // ── Views ──────────────────────────────────────────────────────────────────
@@ -124,7 +139,7 @@ const commandDefinitions: Record<CliCommandName, CliCommandDefinition> = {
   },
   "describe-trigger": {
     description: "Show the definition (SQL) of a trigger.",
-    usage: "describe-trigger --trigger trg_AuditUsers",
+    usage: "describe-trigger --trigger SnapShot",
     execute: async (options) => describeTrigger(getStringOption(options, "trigger")),
   },
 

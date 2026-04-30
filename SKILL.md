@@ -4,110 +4,166 @@ Read-only SQL Server CLI with named database profiles. Use this skill whenever y
 
 ## Setup (one-time)
 
-Connection settings are read from `.env` in the project root (auto-loaded — no flags needed).
+Copy `config/env.example` to `.env` in the project root and fill in your credentials.
 
-**Environment variables** (`.env`):
 ```
-DB_SERVER=10.61.3.100
-DB_USER=pmi_dev
-DB_PASSWORD=<password>
+DB_SERVER=your-sql-server-host
+DB_USER=your-username
+DB_PASSWORD=your-password
 DB_PORT=1433
-DB_ENCRYPT=false
-DB_TRUST_SERVER_CERTIFICATE=true
+DB_ENCRYPT=true
+DB_TRUST_SERVER_CERTIFICATE=false
 
-DB_TENANT=dev_pmi_nch
-DB_GLOBAL=pmi_global
-DB_ADMIN=pmi_admin
-DB_GOGREEN=dev_pmi_gogreen
-```
-
-**Or a JSON config file** at `./config/databases.json`:
-```json
-{
-  "server": "10.61.3.100",
-  "user": "pmi_dev",
-  "password": "<password>",
-  "databases": {
-    "tenant": "dev_pmi_nch",
-    "global": "pmi_global",
-    "admin": "pmi_admin",
-    "gogreen": "dev_pmi_gogreen"
-  }
-}
+DB_TENANT=TenantDB
+DB_GLOBAL=GlobalDB
+DB_ADMIN=AdminDB
+DB_GOGREEN=GoGreenDB
 ```
 
 ## Available profiles
 
-| Profile  | Database        | Contents                                     |
-|----------|-----------------|----------------------------------------------|
-| tenant   | dev_pmi_nch     | Per-hotel data (cockpits, forecasting, labour, rosters) |
-| global   | pmi_global      | Cross-hotel shared data (users, groups, hierarchy) |
-| admin    | pmi_admin       | Admin / configuration tables                 |
-| gogreen  | dev_pmi_gogreen | Environmental / sustainability data          |
+| Profile  | Contents                                                  |
+|----------|-----------------------------------------------------------|
+| tenant   | Per-hotel data — cockpits, forecasting, labour, rosters  |
+| global   | Cross-hotel shared data — users, groups, hierarchy        |
+| admin    | Admin / configuration tables                              |
+| gogreen  | Environmental / sustainability data                       |
+| queue    | PMI queue / job processing data                           |
 
 ## Command reference
 
-### General
 ```bash
-db-cli --list-profiles          # show all configured profiles
-db-cli --help                   # show full help
+db-cli --list-profiles
+db-cli --help
 ```
 
-### Queries (SELECT only — no write SQL allowed)
+### Explore a table (start here)
 ```bash
-db-cli <profile> read-query --query "SELECT TOP 10 * FROM tbl_global_hierarchy"
-db-cli <profile> export-query --format csv  --query "SELECT * FROM tbl_global_user"
-db-cli <profile> export-query --format json --query "SELECT * FROM tbl_global_user"
+# Schema + 3 sample rows in one call — use this before querying an unknown table
+db-cli <profile> preview --table <table>
+
+# Schema only
+db-cli <profile> describe-table --table <table>
+
+# Indexes and constraints
+db-cli <profile> list-indexes     --table <table>
+db-cli <profile> list-constraints --table <table>
 ```
 
-### Tables
+### Query data
+```bash
+# JSON output (default)
+db-cli <profile> read-query --query "SELECT TOP 10 * FROM <table>"
+
+# Human-readable table output
+db-cli <profile> read-query --query "SELECT TOP 10 * FROM <table>" --format table
+
+# Export
+db-cli <profile> export-query --format csv   --query "SELECT * FROM <table>"
+db-cli <profile> export-query --format json  --query "SELECT * FROM <table>"
+db-cli <profile> export-query --format table --query "SELECT * FROM <table>"
+```
+
+### Browse objects
 ```bash
 db-cli <profile> list-tables
-db-cli <profile> describe-table --table Cockpit_Master
-db-cli <profile> list-indexes      --table Cockpit_Master
-db-cli <profile> list-constraints  --table Cockpit_Master
-```
-
-### Views
-```bash
 db-cli <profile> list-views
-db-cli <profile> describe-view --view dbo.MyView
-db-cli <profile> describe-view --view "Aggregated.FB_Aggregated_Labor_Department_Day"
-```
-
-### Stored Procedures
-```bash
-db-cli <profile> list-sp
-db-cli <profile> describe-sp --sp dbo.MyProc
-db-cli <profile> describe-sp --sp "Aggregated.MyProc"
-db-cli <profile> exec-sp     --sp dbo.MyProc
-db-cli <profile> exec-sp     --sp dbo.MyProc --params '{"HotelId":10,"FromDate":"2025-01-01"}'
-```
-
-### Functions
-```bash
 db-cli <profile> list-functions
-db-cli <profile> describe-function --function dbo.MyFunction
+db-cli <profile> list-sp
+db-cli <profile> list-triggers
+
+db-cli <profile> describe-view     --view     <schema.name>
+db-cli <profile> describe-function --function <schema.name>
+db-cli <profile> describe-sp       --sp       <schema.name>
+db-cli <profile> describe-trigger  --trigger  <name>
 ```
 
-### Triggers
+### Execute stored procedures
 ```bash
-db-cli <profile> list-triggers
-db-cli <profile> describe-trigger --trigger SnapShot
+db-cli <profile> exec-sp --sp <schema.name>
+db-cli <profile> exec-sp --sp <schema.name> --params '{"Param1":"value","Param2":10}'
 ```
 
 ## What is blocked
 
-Direct SQL write operations issued by the caller:
-- `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`
-- `CREATE`, `ALTER`, `DROP`
-- Batched statements (semicolons)
+Direct write SQL issued by the caller:
+`INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `CREATE`, `ALTER`, `DROP`,
+`SELECT INTO`, `OPENROWSET`, `OPENDATASOURCE`, `OPENQUERY`, batched statements (`;`)
 
-Stored procedures may contain write logic internally — that is not blocked, as the SP is a trusted DB object.
+Stored procedures may contain internal write logic — that is not blocked, as the SP is a trusted DB object.
+
+## PMI data patterns (cheat-sheet)
+
+### Hotel / hierarchy model
+
+All hotels and departments live in `tbl_global_hierarchy` (tenant db).
+
+```sql
+-- Top-level hotels: hierarchy_parent_id = 0
+SELECT hierarchy_id, hierarchy_name, hierarchy_available_rooms
+FROM tbl_global_hierarchy
+WHERE hierarchy_parent_id = 0 AND hierarchy_level = 1
+
+-- Departments under a hotel (hierarchy_id = 10)
+SELECT hierarchy_id, hierarchy_name, hierarchy_division_name
+FROM tbl_global_hierarchy
+WHERE hierarchy_parent_id = 10
+
+-- Full tree for a hotel (hotel + all its departments)
+SELECT hierarchy_id, hierarchy_name, hierarchy_parent_id, hierarchy_level
+FROM tbl_global_hierarchy
+WHERE hierarchy_id = 10 OR hierarchy_parent_id = 10
+```
+
+Key columns:
+| Column | Meaning |
+|---|---|
+| `hierarchy_id` | Unique ID for any node (hotel or dept) |
+| `hierarchy_parent_id` | Parent node; `0` = top-level hotel |
+| `hierarchy_level` | `1` = hotel, `NULL` = department |
+| `hierarchy_income_level` | `1` = revenue node, `0` = cost/dept node |
+| `hierarchy_available_rooms` | Room count (hotels only) |
+| `hierarchy_division_name` | Primary division: `room`, `fb`, etc. |
+
+### Cockpit labour values
+
+```sql
+-- Labour actuals for hotel 10, last 7 days
+SELECT date, h_id, productive, non_prod, budget
+FROM Cockpit_Labour_Values
+WHERE h_id IN (
+    SELECT hierarchy_id FROM tbl_global_hierarchy WHERE hierarchy_parent_id = 10
+)
+AND date >= DATEADD(day, -7, GETDATE())
+ORDER BY date DESC
+```
+
+### Forecasting values
+
+```sql
+-- Forecasted room nights for hotel 10
+SELECT date, units_rolling, guests_rolling, revenue_rolling
+FROM Forecasting_Values
+WHERE h_id = 10
+AND date BETWEEN '2025-01-01' AND '2025-01-31'
+ORDER BY date
+```
+
+### Global users
+
+```sql
+-- Users (global db)
+SELECT user_id, user_name, user_email, user_active
+FROM tbl_global_user
+WHERE user_active = 1
+```
+
+### Cross-database note
+
+`tbl_global_hierarchy` lives in **tenant** but users live in **global**. Joining them requires two separate CLI calls — run the hierarchy query first, collect the IDs, then query global. Linked-server cross-db joins are not supported by this CLI.
 
 ## Connection overrides (per command)
 
-Override `.env` for a single invocation:
 ```bash
 db-cli tenant list-tables --server otherserver --user otheruser --password otherpass
 ```
